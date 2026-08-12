@@ -350,29 +350,61 @@ function sfxErr(){ beep(180,220,0,0.12); }
 function sfxUnlock(){ beep(440,140); beep(550,140,150); beep(660,160,300); beep(880,420,460,0.2); }
 
 /* ============ SALA / CONEXIÓN ============ */
+let sede = null;
+function renderSedeGate(){
+  document.getElementById('titlebarLabel').textContent = 'select_venue.exe';
+  document.getElementById('stageContent').innerHTML =
+    '<div class="eyebrow">CONEXIÓN AL SERVIDOR // WECODE</div>'
+    + '<h1>¿En qué sede están jugando?</h1>'
+    + '<p>Escriban el mismo nombre de sede que el resto de los equipos que juegan hoy en el mismo lugar (por ejemplo: <b>pocitos</b> o <b>costa</b>). Así no se mezclan con otra sede que esté jugando al mismo tiempo en otro lugar.</p>'
+    + '<div class="answer-row"><input type="text" id="sedeInput" placeholder="nombre de la sede..." onkeydown="if(event.key===\'Enter\') confirmSede()">'
+    + '<button class="btn" onclick="confirmSede()">CONTINUAR</button></div>'
+    + '<div class="feedback" id="sedeFeedback"></div>';
+}
+function confirmSede(){
+  const raw = document.getElementById('sedeInput').value.trim().toLowerCase();
+  const val = raw.replace(/[^a-z0-9]/g,'');
+  const fb = document.getElementById('sedeFeedback');
+  if(!val){
+    fb.className='feedback err shake'; fb.textContent='✖ Escribí el nombre de la sede para continuar.';
+    setTimeout(()=> fb.classList.remove('shake'), 400);
+    return;
+  }
+  sede = val;
+  renderLobby();
+}
 function renderLobby(){
   document.getElementById('titlebarLabel').textContent = 'select_room.exe';
   document.getElementById('stageContent').innerHTML =
-    '<div class="eyebrow">CONEXIÓN AL SERVIDOR // WECODE</div>'
+    '<div class="eyebrow">CONEXIÓN AL SERVIDOR // WECODE // SEDE: '+sede.toUpperCase()+'</div>'
     + '<h1>Elegí la sala de tu equipo</h1>'
     + '<p>Los DOS integrantes del equipo (HACKER 1 y HACKER 2) tienen que elegir la <b>misma sala</b>, cada uno desde su propia computadora, para sincronizarse.</p>'
     + '<div class="chip-row">'+[1,2,3,4,5,6].map(n=>'<button class="btn ghost" onclick="joinRoom(\'equipo'+n+'\')">EQUIPO '+n+'</button>').join('')+'</div>'
     + '<p class="muted" style="margin-top:18px;">¿Sos el/la docente y necesitás reiniciar una sala ya usada? <button class="hint-toggle" onclick="teacherReset()">Reiniciar una sala…</button></p>';
 }
+const TEACHER_PASSWORD = 'Aprogramar1'; // reemplazar antes del evento
 function teacherReset(){
-  const id = prompt('¿Qué sala querés reiniciar? (equipo1 a equipo6)');
+  const pwd = prompt('Ingresá la clave de docente para reiniciar una sala:');
+  if(pwd === null) return;
+  if(pwd.trim().toUpperCase() !== TEACHER_PASSWORD.toUpperCase()){
+    alert('Clave incorrecta. No se reinició ninguna sala.');
+    return;
+  }
+  const id = prompt('¿Qué equipo de la sede "'+sede+'" querés reiniciar? (equipo1 a equipo6)');
   if(!id) return;
-  if(confirm('Esto borra todo el progreso de "'+id+'". ¿Confirmás?')){
-    db.ref('rooms/'+id).remove().then(()=> alert('Sala "'+id+'" reiniciada.'));
+  const fullId = sede+'-'+id;
+  if(confirm('Esto borra todo el progreso de "'+fullId+'". ¿Confirmás?')){
+    db.ref('rooms/'+fullId).remove().then(()=> alert('Sala "'+fullId+'" reiniciada.'));
   }
 }
+let initialLoadHandled = false;
 function joinRoom(id){
-  roomId = id;
+  roomId = sede+'-'+id;
   document.getElementById('titlebarLabel').textContent = 'connecting.exe';
   document.getElementById('stageContent').innerHTML = '<p class="muted">Conectando a la sala '+id+'…</p>';
   const badge = document.getElementById('roomBadge');
   badge.style.display = 'inline-flex';
-  document.getElementById('roomBadgeText').textContent = id.toUpperCase();
+  document.getElementById('roomBadgeText').textContent = sede.toUpperCase()+' / '+id.toUpperCase();
   db.ref('rooms/'+roomId).on('value', onRoomUpdate);
   db.ref('.info/connected').on('value', snap=>{
     document.getElementById('connDot').classList.toggle('live', snap.val()===true);
@@ -380,6 +412,14 @@ function joinRoom(id){
 }
 function onRoomUpdate(snap){
   const val = snap.val() || {};
+  if(!initialLoadHandled){
+    initialLoadHandled = true;
+    if(val.lockOpened === true){
+      // esta sala ya tuvo una partida terminada antes: la limpiamos para arrancar de cero
+      db.ref('rooms/'+roomId).remove();
+      return;
+    }
+  }
   remoteState = {
     missionStarted: !!val.missionStarted,
     endsAt: val.endsAt || null,
@@ -634,9 +674,14 @@ function goToStage(i){
         + waitingNote('binario');
     } else {
       mine = roleTag('TENÉS LA TABLA Y CALCULÁS')
-        + '<p>En binario cada posición vale el doble que la anterior. Con 4 dígitos, de izquierda a derecha:</p>'
-        + '<pre class="code"><span class="kw">1ª posición</span> = <span class="num">8</span>\n<span class="kw">2ª posición</span> = <span class="num">4</span>\n<span class="kw">3ª posición</span> = <span class="num">2</span>\n<span class="kw">4ª posición</span> = <span class="num">1</span></pre>'
-        + '<p class="muted">El HACKER 2 tiene el número. Pedíselo dígito por dígito. Donde hay un 1, sumá el valor de esa posición; donde hay un 0, no sumás nada. Ejemplo: "0101" = 4 + 1 = 5.</p>'
+        + '<p>En binario, cada posición representa una potencia de 2: el valor de cada posición ("su peso") se duplica en cada paso, empezando por la última posición de la derecha. Con 4 dígitos, de izquierda a derecha, los pesos son:</p>'
+        + '<table style="width:100%; border-collapse:collapse; margin:12px 0; font-family:\'JetBrains Mono\',monospace; font-size:14px; text-align:center;">'
+        + '<tr><th style="border:1px solid var(--panel-edge); padding:8px; background:var(--navy);">Posición</th><th style="border:1px solid var(--panel-edge); padding:8px; background:var(--navy);">1ª</th><th style="border:1px solid var(--panel-edge); padding:8px; background:var(--navy);">2ª</th><th style="border:1px solid var(--panel-edge); padding:8px; background:var(--navy);">3ª</th><th style="border:1px solid var(--panel-edge); padding:8px; background:var(--navy);">4ª</th></tr>'
+        + '<tr><td style="border:1px solid var(--panel-edge); padding:8px;">Peso</td><td style="border:1px solid var(--panel-edge); padding:8px;">8</td><td style="border:1px solid var(--panel-edge); padding:8px;">4</td><td style="border:1px solid var(--panel-edge); padding:8px;">2</td><td style="border:1px solid var(--panel-edge); padding:8px;">1</td></tr>'
+        + '</table>'
+        + '<p class="muted"><b>Método por peso:</b> mirá cada dígito del número binario, de izquierda a derecha. Si el dígito es un 1, sumá el peso de esa posición. Si es un 0, esa posición no suma nada. El resultado de sumar todo es el número en decimal.</p>'
+        + '<p><b>Ejemplo resuelto</b> (con otro número, distinto al de este desafío): el binario <b>1010</b> tiene un 1 en la 1ª posición (peso 8) y un 1 en la 3ª posición (peso 2); las otras dos posiciones son 0. Entonces: 8 + 0 + 2 + 0 = <b>10</b>.</p>'
+        + '<p class="muted">El HACKER 2 tiene el número real de este desafío. Pedíselo dígito por dígito y aplicá el mismo método para calcularlo.</p>'
         + answerBlock(i);
     }
     content.innerHTML =
@@ -1175,7 +1220,7 @@ function buildPixelGrid(){
 
 document.getElementById('roleBadge').textContent = '🕶 HACKER ' + ROLE;
 document.getElementById('roleBadge').className = 'role-badge ' + (ROLE===1 ? 'h1' : 'h2');
-renderLobby();
+renderSedeGate();
 </script>
 </body>
 </html>
